@@ -21,6 +21,7 @@ class ViTConfig:
     c: float = 1.0
     depth: int = 16
     use_moe:bool=False
+    every_2:bool=False
 
 
 class PatchEmbedding(nn.Module):
@@ -52,7 +53,19 @@ class VIT(nn.Module) :
         self.Encoder = MOE_Encoder(ffn_dropout=cfg.ffn_dropout,
                                    attn_dropout=cfg.attn_dropout,
                                    depth=cfg.depth,
-                                   ) if cfg.use_moe else MSA_Encoder(cfg)
+                                   emb_dim=cfg.emb_dim,
+                                   ffn_mul=cfg.ffn_mul,
+                                   n_heads=cfg.n_heads,
+                                   c=cfg.c,
+                                   k=cfg.k,
+                                   n_experts=cfg.n_experts,
+                                   every_2=cfg.every_2
+                                   ) if cfg.use_moe else MSA_Encoder(ffn_dropout=cfg.ffn_dropout,
+                                   attn_dropout=cfg.attn_dropout,
+                                   depth=cfg.depth,
+                                   emb_dim=cfg.emb_dim,
+                                   ffn_mul=cfg.ffn_mul,
+                                   n_heads=cfg.n_heads)
         self.cls_head = nn.Sequential(
             nn.LayerNorm(cfg.emb_dim),
             nn.Linear(cfg.emb_dim, cfg.emb_dim),
@@ -72,36 +85,3 @@ class VIT(nn.Module) :
         if self.use_moe :
             return out, aux_loss
         return out
-
-@dataclass
-class vit_model :
-    VIT_S_32 = ViTConfig(
-            emb_dim=512,
-            n_heads=8,
-            ffn_mul=4,
-            n_experts=32,
-            depth=8,
-            patch_size=32,
-            c=1.05,
-            k=1,
-            use_moe=False
-        )
-    VMOE_S_32 = ViTConfig(
-            emb_dim=512,
-            n_heads=8,
-            ffn_mul=4,
-            n_experts=32,
-            depth=8,
-            patch_size=32,
-            c=1.05,
-            k=1,
-            use_moe=True 
-    )
- 
-if __name__ == "__main__" :
-    test_model = VIT(vit_model.VIT_S_32, class_n=18291)
-    test_model_moe = VIT(vit_model.VMOE_S_32, class_n=18291)
-
-    import math
-    print(round(summary(test_model, (10, 3, 224, 224), verbose=0).total_params/1000000, 1), "M")
-    print(round(summary(test_model_moe, (10, 3, 224, 224), verbose=0).total_params/1000000, 1), "M")

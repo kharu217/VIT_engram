@@ -203,7 +203,7 @@ class MSABLock(nn.Module) :
         out_2 = self.FFN(out_2) + out_1
         return out_2
     
-class MOEBLock(nn.Module) :
+class MOEBlock(nn.Module) :
     def __init__(self, emb_dim, n_heads, attn_dropout, ffn_mul, ffn_dropout, n_experts, k, c):
         super().__init__()
         self.norm = nn.LayerNorm(normalized_shape=emb_dim)
@@ -240,19 +240,45 @@ class MSA_Encoder(nn.Sequential) :
                                     ffn_dropout=ffn_dropout) for _ in range(depth)])
 
 class MOE_Encoder(nn.Module) :
-    def __init__(self,emb_dim, n_heads, attn_dropout, ffn_mul, ffn_dropout, depth, ):
+    def __init__(self,emb_dim, n_heads, attn_dropout, ffn_mul, ffn_dropout, c, k, n_experts,depth, every_2):
         super().__init__()
-        self.layer = nn.ModuleList([layer for _ in range(depth//2) for layer in (
-                           MSABLock(emb_dim=emb_dim,
+        if every_2 :
+            self.layer = nn.ModuleList([layer for _ in range(depth//2) for layer in (
+                            MSABLock(emb_dim=emb_dim,
+                                        n_heads=n_heads,
+                                        attn_dropout=attn_dropout,
+                                        ffn_mul=ffn_mul,
+                                        ffn_dropout=ffn_dropout),
+
+                            MOEBlock(emb_dim=emb_dim,
+                                        n_heads=n_heads,
+                                        attn_dropout=attn_dropout,
+                                        ffn_mul=ffn_mul,
+                                        ffn_dropout=ffn_dropout,
+                                        c=c,
+                                        k=k,
+                                        n_experts=n_experts))])
+        else :
+            self.layer = nn.ModuleList([MSABLock(emb_dim=emb_dim,
                                     n_heads=n_heads,
                                     attn_dropout=attn_dropout,
                                     ffn_mul=ffn_mul,
-                                    ffn_dropout=ffn_dropout), MOEBLock())])
+                                    ffn_dropout=ffn_dropout) for _ in range(depth-2)])
+            for _ in range(2) :
+                self.layer.append(MOEBlock(emb_dim=emb_dim,
+                                        n_heads=n_heads,
+                                        attn_dropout=attn_dropout,
+                                        ffn_mul=ffn_mul,
+                                        ffn_dropout=ffn_dropout,
+                                        c=c,
+                                        k=k,
+                                        n_experts=n_experts))
+
 
     def forward(self, x) :
         aux_loss = 0
-        for i, l in enumerate(self.layer) :
-            if i%2==0 :
+        for l in self.layer :
+            if l._get_name() != "MOEBlock" :
                 x = l(x)
             else :
                 x, loss = l(x)
