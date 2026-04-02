@@ -2,6 +2,10 @@ import torch
 import torch.nn.functional as F
 from torch import Tensor, nn
 
+class Fast_GELU(nn.Module) :
+    def forward(self, x: torch.Tensor):
+        return x * torch.sigmoid(1.702 * x)
+
 class SwitchGate(nn.Module):
     """
     SwitchGate module for MoE (Mixture of Experts) model.
@@ -178,15 +182,19 @@ class FeedForwardBlock(nn.Sequential):
     def __init__(self, emb_size: int, expansion: int = 4, drop_p: float = 0.):
         super().__init__(
             nn.Linear(emb_size, expansion * emb_size),
-            nn.GELU(),
+            Fast_GELU(),
             nn.Dropout(drop_p),
             nn.Linear(expansion * emb_size, emb_size),
         )
 
 class MSABLock(nn.Module) :
-    def __init__(self, emb_dim, n_heads, attn_dropout, ffn_mul, ffn_dropout):
+    def __init__(self, emb_dim, n_heads,attn_dropout, ffn_mul, ffn_dropout, mask=None):
         super().__init__()
-        self.norm = nn.LayerNorm(normalized_shape=emb_dim)
+        self.mask = mask
+
+        self.norm1 = nn.LayerNorm(normalized_shape=emb_dim)
+        self.norm2 = nn.LayerNorm(normalized_shape=emb_dim)
+
         self.MSA = nn.MultiheadAttention(embed_dim=emb_dim,
                                          num_heads=n_heads,
                                          dropout=attn_dropout,
@@ -195,18 +203,19 @@ class MSABLock(nn.Module) :
                                     expansion=ffn_mul,
                                     drop_p=ffn_dropout)
     def forward(self, x) :
-        out_1 = self.norm(x)
-        attn_output, _ = self.MSA(out_1, out_1, out_1, need_weights=False)
-        attn_output.add_(x)
-
-        out_2 = self.norm(attn_output)
-        out_2 = self.FFN(out_2) + out_1
-        return out_2
+        norm_x = self.norm1(x)
+        feat, _ = self.MSA(norm_x, norm_x, norm_x, need_weights=False)
+        x = x + feat
+        out = self.FFN(self.norm2(x))
+        out = out + x
+        return out
     
 class MOEBlock(nn.Module) :
-    def __init__(self, emb_dim, n_heads, attn_dropout, ffn_mul, ffn_dropout, n_experts, k, c):
+    def __init__(self, emb_dim, n_heads,attn_dropout, ffn_mul, ffn_dropout, n_experts, k, c, mask=None):
         super().__init__()
-        self.norm = nn.LayerNorm(normalized_shape=emb_dim)
+        self.mask = mask
+        self.norm1 = nn.LayerNorm(normalized_shape=emb_dim)
+        self.norm2 = nn.LayerNorm(normalized_shape=emb_dim)
         self.MSA = nn.MultiheadAttention(embed_dim=emb_dim,
                                          num_heads=n_heads,
                                          dropout=attn_dropout,
@@ -218,29 +227,24 @@ class MOEBlock(nn.Module) :
                              capacity_factor=c,
                              drop_p=ffn_dropout)
     def forward(self, x) :
-        out_1 = self.norm(x)
-        attn_output, _ = self.MSA(out_1, out_1, out_1, need_weights=False)
-        attn_output.add_(x)
-
-        out_2 = self.norm(attn_output)
-        out_3, aux_loss = self.moe(out_2)
-        
-        out_3.add_(out_1)
-        return out_3, aux_loss
-
-
-
+        norm_x = self.norm1(x)
+        feat, _ = self.MSA(norm_x, norm_x, norm_x)
+        x = x + feat
+        out, aux_loss = self.moe(self.norm2(x))
+        out = out + x
+        return out, aux_loss
 
 class MSA_Encoder(nn.Sequential) :
-    def __init__(self,emb_dim, n_heads, attn_dropout, ffn_mul, ffn_dropout, depth):
+    def __init__(self,emb_dim, n_heads, attn_dropout, ffn_mul, ffn_dropout, depth, mask=None):
         super().__init__(*[MSABLock(emb_dim=emb_dim,
                                     n_heads=n_heads,
                                     attn_dropout=attn_dropout,
                                     ffn_mul=ffn_mul,
-                                    ffn_dropout=ffn_dropout) for _ in range(depth)])
+                                    ffn_dropout=ffn_dropout,
+                                    mask=mask) for _ in range(depth)])
 
 class MOE_Encoder(nn.Module) :
-    def __init__(self,emb_dim, n_heads, attn_dropout, ffn_mul, ffn_dropout, c, k, n_experts,depth, every_2):
+    def __init__(self,emb_dim, n_heads, attn_dropout, ffn_mul, ffn_dropout, c, k, n_experts,depth, every_2, mask=None):
         super().__init__()
         if every_2 :
             self.layer = nn.ModuleList([layer for _ in range(depth//2) for layer in (
@@ -248,7 +252,8 @@ class MOE_Encoder(nn.Module) :
                                         n_heads=n_heads,
                                         attn_dropout=attn_dropout,
                                         ffn_mul=ffn_mul,
-                                        ffn_dropout=ffn_dropout),
+                                        ffn_dropout=ffn_dropout, 
+                                        mask=mask),
 
                             MOEBlock(emb_dim=emb_dim,
                                         n_heads=n_heads,
@@ -257,13 +262,14 @@ class MOE_Encoder(nn.Module) :
                                         ffn_dropout=ffn_dropout,
                                         c=c,
                                         k=k,
-                                        n_experts=n_experts))])
+                                        n_experts=n_experts,
+                                        mask=mask))])
         else :
             self.layer = nn.ModuleList([MSABLock(emb_dim=emb_dim,
                                     n_heads=n_heads,
                                     attn_dropout=attn_dropout,
                                     ffn_mul=ffn_mul,
-                                    ffn_dropout=ffn_dropout) for _ in range(depth-2)])
+                                    ffn_dropout=ffn_dropout, mask=mask) for _ in range(depth-2)])
             for _ in range(2) :
                 self.layer.append(MOEBlock(emb_dim=emb_dim,
                                         n_heads=n_heads,
@@ -272,7 +278,8 @@ class MOE_Encoder(nn.Module) :
                                         ffn_dropout=ffn_dropout,
                                         c=c,
                                         k=k,
-                                        n_experts=n_experts))
+                                        n_experts=n_experts,
+                                        mask=mask))
 
 
     def forward(self, x) :
@@ -283,4 +290,9 @@ class MOE_Encoder(nn.Module) :
             else :
                 x, loss = l(x)
                 aux_loss += loss
-        return x, aux_loss/len(self.layer)
+        return x, aux_loss
+
+if __name__ == "__main__" :
+    import torchinfo
+    test_model = MOE_Encoder(100, 4, 0.1, 1, 0.1, 1, 1, 16, 4, False)
+    torchinfo.summary(test_model, input_size=(10, 32, 100)) 

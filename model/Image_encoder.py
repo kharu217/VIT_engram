@@ -1,7 +1,5 @@
 import torch
-import torch.nn.functional as F
 from torch import Tensor, nn
-from torchinfo import summary
 from einops.layers.torch import Rearrange
 from dataclasses import dataclass
 from modules import MSA_Encoder, MOE_Encoder
@@ -45,7 +43,7 @@ class PatchEmbedding(nn.Module):
 
 
 class VIT(nn.Module) :
-    def __init__(self, cfg:ViTConfig, class_n:int):
+    def __init__(self, cfg:ViTConfig):
         super().__init__()
         self.use_moe = cfg.use_moe
         
@@ -66,21 +64,13 @@ class VIT(nn.Module) :
                                    emb_dim=cfg.emb_dim,
                                    ffn_mul=cfg.ffn_mul,
                                    n_heads=cfg.n_heads)
-        self.cls_head = nn.Sequential(
-            nn.LayerNorm(cfg.emb_dim),
-            nn.Linear(cfg.emb_dim, cfg.emb_dim),
-            nn.GELU(),
-            nn.Linear(cfg.emb_dim, class_n)
-        )
 
     def forward(self, x) :
         emb = self.patch_emb(x)
         if self.use_moe :
-            feat, aux_loss = self.Encoder(emb)
+            out, aux_loss = self.Encoder(emb)
         else :
-            feat = self.Encoder(emb)
-        feat = feat.mean(dim=1).squeeze()
-        out = self.cls_head(feat)
+            out = self.Encoder(emb)
         
         if self.use_moe :
             return out, aux_loss
