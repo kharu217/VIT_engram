@@ -42,14 +42,14 @@ class PatchEmbedding(nn.Module):
                 nn.Conv2d(cfg.in_channels, engram_config.vocab_size, kernel_size=cfg.patch_size, stride=cfg.patch_size),
                 Rearrange('b e (h) (w) -> b (h w) e'),
             )
-            self.temparature = torch.exp(nn.Parameter(torch.log(torch.tensor(1.0))))
+            self.temparature = nn.Parameter(torch.log(torch.tensor(1.0)))
 
         self.positions = nn.Parameter(torch.randn((cfg.img_size // cfg.patch_size) **2, cfg.emb_dim))
 
     def forward(self, x: Tensor) -> Tensor:
         b, _, _, _ = x.shape
         x = self.projection(x)
-        engram_token = torch.argmax(F.gumbel_softmax(self.to_dis_token(x), hard=True, tau=self.temparature), dim=2)
+        engram_token = torch.argmax(F.gumbel_softmax(self.to_dis_token(x), hard=True, tau=torch.exp(self.temparature)), dim=2)
         # add position embedding
         x += self.positions
         return x, engram_token

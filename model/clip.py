@@ -2,12 +2,14 @@ import torch
 from torch import Tensor, nn
 import numpy as np
 
-from model_configs import ViTConfig, TETConfig
+from model_configs import ViTConfig, TETConfig, 
+
 from Image_encoder import VIT
 from text_encoder import TET
 
+
 class CLIP(nn.Module) :
-    def __init__(self, image_encoder_cfg:ViTConfig, text_encoder_cfg:TETConfig, ):
+    def __init__(self, image_encoder_cfg:ViTConfig, text_encoder_cfg:TETConfig, engram_cfg:):
         super().__init__()
         self.i_cfg = image_encoder_cfg
         self.t_cfg = text_encoder_cfg

@@ -8,7 +8,7 @@ from dataclasses import dataclass
 @dataclass
 class engram_config :
     embd_d: int = 512
-    engram_vocab_size: int = [2262400, 2262400]
+    engram_vocab_size: int = 2262400
     max_ngram: int = 3
     engram_embd_d: int = 1280
     n_streams: int = 8
@@ -49,7 +49,7 @@ class ShortConv(nn.Module):
 class NgramHashMapping(nn.Module):
     def __init__(self, vocab_sizes, max_ngram, num_heads=2, seed=42):
         super().__init__()
-        self.vocab_sizes = vocab_sizes
+        self.vocab_sizes = [vocab_sizes] * (max_ngram - 1)
         self.max_ngram = max_ngram
         self.num_heads = num_heads
 
@@ -89,12 +89,12 @@ class EngramModule(nn.Module):
     def __init__(self, engram_cfg:engram_config):
         super().__init__()
 
-        self.engram_vocab_size = engram_cfg.engram_vocab_size
+        self.engram_vocab_size = [engram_cfg.engram_vocab_size] * (engram_cfg.max_ngram - 1)
         self.embd_d = engram_cfg.embd_d
         self.n_streams = engram_cfg.n_streams
 
         self.hasher = NgramHashMapping(engram_cfg.engram_vocab_size, engram_cfg.max_ngram)
-        total_slots = sum(engram_cfg.engram_vocab_size) * self.hasher.num_heads
+        self.total_slots = sum(engram_cfg.engram_vocab_size) * self.hasher.num_heads
         
         #self.embedding = nn.Embedding(total_slots, engram_cfg.engram_embd_d)
 
@@ -109,14 +109,16 @@ class EngramModule(nn.Module):
         self.norm_k = nn.ModuleList([nn.RMSNorm(engram_config.embd_d) for _ in range(engram_config.n_streams)])
         self.conv = ShortConv(engram_config.embd_d, hc_mult=engram_config.n_streams)
 
-    def forward(self, x, input_ids, embedding_table:nn.Embedding):
+    def forward(self, x, input_ids, embedding:nn.Embedding):
         hash_ids = self.hasher(input_ids)
         offsets = torch.tensor([0] + [v for v in self.engram_vocab_size for _ in range(self.hasher.num_heads)],
                                device=x.device)
         offsets = torch.cumsum(offsets, dim=0)[:-1]
         hash_ids = hash_ids + offsets
 
-        emb = embedding_table(hash_ids).flatten(start_dim=2)
+        if embedding.weight.shape != torch.size([self.total_slots, self.embd_d]) :
+            raise Exception("embedding table has unvalid shape")
+        emb = embedding(hash_ids).flatten(start_dim=2)
         v_base = self.val_proj(emb)
 
         gates = []
@@ -137,3 +139,4 @@ if __name__ == "__main__" :
     print(temp(torch.randint(0, 10, (5, 5))).shape)
     temp2 = EngramModule(128, [100, 100], max_ngram=3, engram_embd_d=128, n_streams=8)
     print(temp2(torch.randn((5, 10, 8, 128)), torch.randint(0, 10, (5, 10))).shape)
+
