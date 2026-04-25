@@ -8,7 +8,7 @@ from dataclasses import dataclass
 @dataclass
 class engram_config :
     embd_d: int = 512
-    engram_vocab_size: int = 2262400
+    engram_vocab_size: int = 226
     max_ngram: int = 3
     engram_embd_d: int = 1280
     n_streams: int = 4
@@ -59,7 +59,7 @@ class NgramHashMapping(nn.Module):
         )
         self.register_buffer(
             'modulos',
-            torch.tensor([v for v in vocab_sizes]).view(-1, 1)
+            torch.tensor([v for v in self.vocab_sizes]).view(-1, 1)
         )
 
     def forward(self, input_ids):
@@ -91,14 +91,15 @@ class EngramModule(nn.Module):
 
         self.engram_vocab_size = [engram_cfg.engram_vocab_size] * (engram_cfg.max_ngram - 1)
         self.embd_d = engram_cfg.embd_d
+        self.engram_embd_d = engram_cfg.engram_embd_d
         self.n_streams = engram_cfg.n_streams
 
         self.hasher = NgramHashMapping(engram_cfg.engram_vocab_size, engram_cfg.max_ngram)
-        self.total_slots = sum(engram_cfg.engram_vocab_size) * self.hasher.num_heads
+        self.total_slots = sum(self.hasher.vocab_sizes) * self.hasher.num_heads
         
         #self.embedding = nn.Embedding(total_slots, engram_cfg.engram_embd_d)
 
-        total_ngrams = len(engram_cfg.engram_vocab_size) * self.hasher.num_heads
+        total_ngrams = len(self.hasher.vocab_sizes) * self.hasher.num_heads
         input_dim = total_ngrams * engram_cfg.engram_embd_d
 
         self.val_proj = nn.Linear(input_dim, engram_config.embd_d)
@@ -110,13 +111,14 @@ class EngramModule(nn.Module):
         self.conv = ShortConv(engram_config.embd_d, hc_mult=engram_config.n_streams)
 
     def forward(self, x, input_ids, embedding:nn.Embedding):
+
         hash_ids = self.hasher(input_ids)
         offsets = torch.tensor([0] + [v for v in self.engram_vocab_size for _ in range(self.hasher.num_heads)],
                                device=x.device)
         offsets = torch.cumsum(offsets, dim=0)[:-1]
         hash_ids = hash_ids + offsets
 
-        if embedding.weight.shape != torch.size([self.total_slots, self.embd_d]) :
+        if embedding.weight.shape != torch.Size([self.total_slots, self.engram_embd_d]) :
             raise Exception("embedding table has unvalid shape")
         emb = embedding(hash_ids).flatten(start_dim=2)
         v_base = self.val_proj(emb)

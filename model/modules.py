@@ -219,8 +219,9 @@ class mHyperConnection(nn.Module):
         """
         x: [B, L, n, C]
         """
+
         B, L, n, C = x.shape
-        nC = n * C
+        nC = self.n * C
 
         # flatten: [B, L, n, C] → [B, L, nC]
         x_vec = x.reshape(B, L, nC)
@@ -254,15 +255,18 @@ class mHyperConnection(nn.Module):
 
         return H_pre, H_post, H_res
 
-    def forward(self, x: torch.Tensor, sublayer_fn) -> torch.Tensor:
+    def forward(self, x: torch.Tensor, sublayer_fn, need_contract:bool=True) -> torch.Tensor:
         """
         논문 eq(3): x_{l+1} = H_res @ x_l + H_post^T @ F(H_pre @ x_l)
         x: [B, L, n, C]
         """
         H_pre, H_post, H_res = self.get_mappings(x)
 
-        # H_pre @ x_l: [B,L,n] weighted sum → [B,L,C]
-        h_in = (H_pre.unsqueeze(-1) * x).sum(dim=2)           # [B, L, C]
+        if need_contract :
+            # H_pre @ x_l: [B,L,n] weighted sum → [B,L,C]
+            h_in = (H_pre.unsqueeze(-1) * x).sum(dim=2)           # [B, L, C]
+        else :
+            h_in = (H_pre.unsqueeze(-1) * x)
 
         # sublayer
         h_out = sublayer_fn(h_in)                              # [B, L, C]
@@ -301,6 +305,7 @@ class MSABLock(nn.Module) :
                                     drop_p=ffn_dropout)
         
         self.mhc_attn = mHyperConnection(emb_dim, hc_mult, sinkhorn_iter=5)
+        self.mhc_ffn = mHyperConnection(emb_dim, hc_mult, sinkhorn_iter=5)
     def forward(self, x):
         """
         x: [B, L, n, C]  ← mHC stream format
@@ -313,8 +318,8 @@ class MSABLock(nn.Module) :
                               need_weights=False)
             return out
 
-        x = self.hc_attn(x, attn_fn)          # [B, L, n, C]
-        x = self.hc_ffn(x, self.FFN)          # [B, L, n, C]
+        x = self.mhc_attn(x, attn_fn)          # [B, L, n, C]
+        x = self.mhc_ffn(x, self.FFN)          # [B, L, n, C]
         return x
     
 class MOEBlock(nn.Module):
@@ -370,10 +375,10 @@ class MSA_Encoder(nn.Module) :
                                     ffn_mul=ffn_mul,
                                     ffn_dropout=ffn_dropout,
                                     mask=mask,
-                                    hc_mult=hc_mult) for _ in range(depth)])
+                                    hc_mult=engram_cfg.n_streams) for _ in range(depth)])
         if engram_config.engram_layer_n :
             self.engram_layer = nn.ModuleList([EngramModule(engram_cfg) for _ in engram_config.engram_layer_n])
-            self.engram_mhc = nn.ModuleList([mHyperConnection(emb_dim, hc_mult, sinkhorn_iter=5)])
+            self.engram_mhc = nn.ModuleList([mHyperConnection(emb_dim, engram_cfg.n_streams, sinkhorn_iter=5)])
 
     def forward(self, x, engram_embedding_table=None, engram_token_id=None) :
         out = x
@@ -384,7 +389,8 @@ class MSA_Encoder(nn.Module) :
                 def engram_fn(h) :
                     out = self.engram_layer[layer_idx](h, engram_token_id, engram_embedding_table[layer_idx])
                     return out
-                out = self.engram_mhc[layer_idx](x, engram_fn)
+                
+                out = self.engram_mhc[layer_idx](x, engram_fn, need_contract=False)
                 out = layer(out)
             else :
                 out = layer(out)
@@ -394,8 +400,10 @@ class MSA_Encoder(nn.Module) :
 class MOE_Encoder(nn.Module) :
     def __init__(self,emb_dim, n_heads, attn_dropout, ffn_mul, ffn_dropout, c, k, n_experts,depth, every_2, mask=None, engram_cfg:engram_config=None):
         super().__init__()
+        self.engram_cfg = engram_cfg
+
         if every_2 :
-            self.layer = nn.ModuleList([layer for _ in range(depth//2) for layer in (
+            self.MOE_layer = nn.ModuleList([layer for _ in range(depth//2) for layer in (
                             MSABLock(emb_dim=emb_dim,
                                         n_heads=n_heads,
                                         attn_dropout=attn_dropout,
@@ -415,14 +423,14 @@ class MOE_Encoder(nn.Module) :
                                         hc_mult=engram_cfg.n_streams,
                                         mask=mask))])
         else :
-            self.layer = nn.ModuleList([MSABLock(emb_dim=emb_dim,
+            self.MOE_layer = nn.ModuleList([MSABLock(emb_dim=emb_dim,
                                     n_heads=n_heads,
                                     attn_dropout=attn_dropout,
                                     ffn_mul=ffn_mul,
                                     hc_mult=engram_cfg.n_streams,
                                     ffn_dropout=ffn_dropout, mask=mask) for _ in range(depth-2)])
             for _ in range(2) :
-                self.layer.append(MOEBlock(emb_dim=emb_dim,
+                self.MOE_layer.append(MOEBlock(emb_dim=emb_dim,
                                         n_heads=n_heads,
                                         attn_dropout=attn_dropout,
                                         ffn_mul=ffn_mul,
@@ -436,17 +444,40 @@ class MOE_Encoder(nn.Module) :
             self.engram_layer = nn.ModuleList([EngramModule(engram_cfg) for _ in engram_config.engram_layer_n])
             self.engram_mhc = nn.ModuleList([mHyperConnection(emb_dim, engram_cfg.n_streams, sinkhorn_iter=5)])
 
-    def forward(self, x) :
+    def forward(self, x, engram_embedding_table=None, engram_token_id=None) :
+
+        out = x
         aux_loss = 0
-        for l in self.layer :
-            if l._get_name() != "MOEBlock" :
-                x = l(x)
+        if len(x.shape) == 3 :
+            out.unsqueeze_(2)
+            out = out.expand(-1, -1, self.engram_cfg.n_streams, -1)
+
+        for idx, layer in enumerate(self.MOE_layer) :
+            if idx + 1 in self.engram_cfg.engram_layer_n :
+                layer_idx = self.engram_cfg.engram_layer_n.index(idx+1)
+
+                def engram_fn(h) :
+                    out = self.engram_layer[layer_idx](h, engram_token_id, engram_embedding_table[layer_idx])
+                    return out
+
+                out = self.engram_mhc[layer_idx](out, engram_fn, need_contract=False)
+                out = layer(out)
+                if layer._get_name() != "MOEBlock" :
+                    out = layer(out)
+                else :
+                    out, loss = layer(out)
+                    aux_loss += loss
             else :
-                x, loss = l(x)
-                aux_loss += loss
-        return x, aux_loss
+                if layer._get_name() != "MOEBlock" :
+                    out = layer(out)
+                else :
+                    out, loss = layer(out)
+                    aux_loss += loss
+        
+        return out, aux_loss
 
 if __name__ == "__main__" :
-    import torchinfo
-    test_model = MOE_Encoder(100, 4, 0.1, 1, 0.1, 1, 1, 16, 4, False)
-    torchinfo.summary(test_model, input_size=(10, 32, 100))
+    test_model = MOE_Encoder(512, 4, 0.1, 1, 0.1, 1, 1, 16, 4, False, engram_cfg=engram_config).to(device="cuda")
+    embedding_list = nn.ModuleList([nn.Embedding(sum([engram_config.engram_vocab_size] * 2) * 2, engram_config.engram_embd_d, device="cuda"),
+                                    nn.Embedding(sum([engram_config.engram_vocab_size] * 2) * 2, engram_config.engram_embd_d, device="cuda")])
+    print(test_model(torch.randn((10, 32, 512), device="cuda"), embedding_list, torch.randint(0, 10, (10, 32), device="cuda")))
