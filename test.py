@@ -1,6 +1,6 @@
 import torch
+import torch.nn as nn
+import torchinfo
 
-print(torch.randn((10, 10)).shape)
-print(torch.randn(10, 10).shape == torch.Size([10, 10]))
-
-print(torch.nn.ModuleList([torch.nn.Embedding(10, 10), torch.nn.Embedding(10, 10)]).weight.shape)
+temp = nn.Embedding((200000 * 2) * 2, 256).to(dtype=torch.float16)
+torchinfo.summary(temp, input_data=[torch.randint(0, 10, (10, 77))])

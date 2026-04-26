@@ -102,13 +102,13 @@ class EngramModule(nn.Module):
         total_ngrams = len(self.hasher.vocab_sizes) * self.hasher.num_heads
         input_dim = total_ngrams * engram_cfg.engram_embd_d
 
-        self.val_proj = nn.Linear(input_dim, engram_config.embd_d)
+        self.val_proj = nn.Linear(input_dim, engram_cfg.embd_d)
         self.key_projs = nn.ModuleList([
-            nn.Linear(input_dim, engram_config.embd_d) for _ in range(engram_config.n_streams)
+            nn.Linear(input_dim, engram_cfg.embd_d) for _ in range(engram_cfg.n_streams)
         ])
-        self.norm_q = nn.ModuleList([nn.RMSNorm(engram_config.embd_d) for _ in range(engram_config.n_streams)])
-        self.norm_k = nn.ModuleList([nn.RMSNorm(engram_config.embd_d) for _ in range(engram_config.n_streams)])
-        self.conv = ShortConv(engram_config.embd_d, hc_mult=engram_config.n_streams)
+        self.norm_q = nn.ModuleList([nn.RMSNorm(engram_cfg.embd_d) for _ in range(engram_cfg.n_streams)])
+        self.norm_k = nn.ModuleList([nn.RMSNorm(engram_cfg.embd_d) for _ in range(engram_cfg.n_streams)])
+        self.conv = ShortConv(engram_cfg.embd_d, hc_mult=engram_cfg.n_streams)
 
     def forward(self, x, input_ids, embedding:nn.Embedding):
 

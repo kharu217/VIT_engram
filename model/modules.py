@@ -265,11 +265,12 @@ class mHyperConnection(nn.Module):
         if need_contract :
             # H_pre @ x_l: [B,L,n] weighted sum → [B,L,C]
             h_in = (H_pre.unsqueeze(-1) * x).sum(dim=2)           # [B, L, C]
+            # sublayer
+            h_out = sublayer_fn(h_in)                # [B, L, C]            
         else :
             h_in = (H_pre.unsqueeze(-1) * x)
-
-        # sublayer
-        h_out = sublayer_fn(h_in)                              # [B, L, C]
+            # sublayer
+            h_out = sublayer_fn(h_in).sum(dim=2)                # [B, L, C]
 
         # H_res @ x_l: stream mixing
         x_res = torch.einsum('blij,bljc->blic', H_res, x)     # [B, L, n, C]
@@ -289,7 +290,7 @@ class FeedForwardBlock(nn.Sequential):
         )
 
 class MSABLock(nn.Module) :
-    def __init__(self, emb_dim, n_heads,attn_dropout, ffn_mul, ffn_dropout, hc_mult,mask=None):
+    def __init__(self, emb_dim, n_heads,attn_dropout, ffn_mul, ffn_dropout, hc_mult=4,mask=None):
         super().__init__()
         self.mask = mask
         
@@ -378,19 +379,23 @@ class MSA_Encoder(nn.Module) :
                                     hc_mult=engram_cfg.n_streams) for _ in range(depth)])
         if engram_config.engram_layer_n :
             self.engram_layer = nn.ModuleList([EngramModule(engram_cfg) for _ in engram_config.engram_layer_n])
-            self.engram_mhc = nn.ModuleList([mHyperConnection(emb_dim, engram_cfg.n_streams, sinkhorn_iter=5)])
+            self.engram_mhc = nn.ModuleList([mHyperConnection(emb_dim, engram_cfg.n_streams, sinkhorn_iter=20) for _ in engram_config.engram_layer_n])
 
     def forward(self, x, engram_embedding_table=None, engram_token_id=None) :
         out = x
+        if len(x.shape) == 3 :
+            out.unsqueeze_(2)
+            out = out.expand(-1, -1, self.engram_cfg.n_streams, -1)
+
         for idx, layer in enumerate(self.MSA_layers) :
             if idx + 1 in self.engram_cfg.engram_layer_n :
-                layer_idx = self.engram_cfg.engram_layer_n.index(idx)
+                layer_idx = self.engram_cfg.engram_layer_n.index(idx+1)
 
                 def engram_fn(h) :
                     out = self.engram_layer[layer_idx](h, engram_token_id, engram_embedding_table[layer_idx])
                     return out
                 
-                out = self.engram_mhc[layer_idx](x, engram_fn, need_contract=False)
+                out = self.engram_mhc[layer_idx](out, engram_fn, need_contract=False)
                 out = layer(out)
             else :
                 out = layer(out)
@@ -442,7 +447,7 @@ class MOE_Encoder(nn.Module) :
                                         mask=mask))
         if engram_config.engram_layer_n :
             self.engram_layer = nn.ModuleList([EngramModule(engram_cfg) for _ in engram_config.engram_layer_n])
-            self.engram_mhc = nn.ModuleList([mHyperConnection(emb_dim, engram_cfg.n_streams, sinkhorn_iter=5)])
+            self.engram_mhc = nn.ModuleList([mHyperConnection(emb_dim, engram_cfg.n_streams, sinkhorn_iter=20)])
 
     def forward(self, x, engram_embedding_table=None, engram_token_id=None) :
 
@@ -478,6 +483,12 @@ class MOE_Encoder(nn.Module) :
 
 if __name__ == "__main__" :
     test_model = MOE_Encoder(512, 4, 0.1, 1, 0.1, 1, 1, 16, 4, False, engram_cfg=engram_config).to(device="cuda")
+    test_model_2 = MSA_Encoder(512, 4, 0.1, 1, 0.1, 16, engram_cfg=engram_config).to(device="cuda")
+
     embedding_list = nn.ModuleList([nn.Embedding(sum([engram_config.engram_vocab_size] * 2) * 2, engram_config.engram_embd_d, device="cuda"),
                                     nn.Embedding(sum([engram_config.engram_vocab_size] * 2) * 2, engram_config.engram_embd_d, device="cuda")])
-    print(test_model(torch.randn((10, 32, 512), device="cuda"), embedding_list, torch.randint(0, 10, (10, 32), device="cuda")))
+    
+    input_data_l = [torch.randn((10, 32, 512), device="cuda"), embedding_list, torch.randint(0, 10, (10, 32), device="cuda")]
+
+    print(test_model(torch.randn((10, 32, 512), device="cuda"), embedding_list, torch.randint(0, 10, (10, 32), device="cuda"))[0].shape)
+    print(test_model_2(torch.randn((10, 32, 512), device="cuda"), embedding_list, torch.randint(0, 10, (10, 32), device="cuda")).shape)

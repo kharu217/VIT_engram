@@ -22,6 +22,7 @@ class ViTConfig:
     depth: int = 16
     use_moe:bool=False
     every_2:bool=False
+    device="cuda"
 
 
 class PatchEmbedding(nn.Module):
@@ -48,11 +49,11 @@ class PatchEmbedding(nn.Module):
 
     def forward(self, x: Tensor) -> Tensor:
         b, _, _, _ = x.shape
-        x = self.projection(x)
+        out = self.projection(x)
         engram_token = torch.argmax(F.gumbel_softmax(self.to_dis_token(x), hard=True, tau=torch.exp(self.temparature)), dim=2)
         # add position embedding
-        x += self.positions
-        return x, engram_token
+        out += self.positions
+        return out, engram_token
 
 
 class VIT(nn.Module) :
@@ -81,14 +82,15 @@ class VIT(nn.Module) :
                                    depth=cfg.depth,
                                    emb_dim=cfg.emb_dim,
                                    ffn_mul=cfg.ffn_mul,
-                                   n_heads=cfg.n_heads)
+                                   n_heads=cfg.n_heads,
+                                   engram_cfg=engram_cfg)
 
-    def forward(self, x) :
+    def forward(self, x, engram_embedding_table=None) :
         emb, engram_token = self.patch_emb(x)
         if self.use_moe :
-            out, aux_loss = self.Encoder(emb)
+            out, aux_loss = self.Encoder(emb, engram_embedding_table, engram_token)
         else :
-            out = self.Encoder(emb)
+            out = self.Encoder(emb, engram_embedding_table, engram_token)
         
         if self.use_moe :
             return out, aux_loss

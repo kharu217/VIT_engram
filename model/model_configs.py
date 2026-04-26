@@ -1,6 +1,8 @@
 from Image_encoder import ViTConfig
 from text_encoder import TETConfig
+from engram import engram_config
 from dataclasses import dataclass
+import torch.optim as optim
 
 
 #small model need to use 362 output_dim
@@ -87,9 +89,39 @@ class tet_model :
         every_2=False
     )
 
-class engram_config :
-    engram_
-    
+class engram_config_set :
+    engram_config_text_S = engram_config(
+        embd_d=256,
+        engram_vocab_size=20000,
+        max_ngram=3,
+        engram_embd_d=256,
+        vocab_size=49408
+    )
+
+    engram_config_image_S = engram_config(
+        embd_d=512,
+        engram_vocab_size=20000,
+        max_ngram=3,
+        engram_embd_d=256,
+        vocab_size=49408
+    )
+
+    engram_config_image_B = engram_config(
+        embd_d=512,
+        engram_vocab_size=20000,
+        max_ngram=3,
+        engram_embd_d=256,
+        vocab_size=49408
+    )
+
+    engram_config_image_B = engram_config(
+        embd_d=512,
+        engram_vocab_size=20000,
+        max_ngram=3,
+        engram_embd_d=256,
+        vocab_size=49408
+    )
+
 if __name__ == "__main__" :
     from text_encoder import TET
     from Image_encoder import VIT

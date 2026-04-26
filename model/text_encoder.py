@@ -7,11 +7,10 @@ from engram import engram_config
 
 @dataclass
 class TETConfig:
-    vocab_size=49408
+    vocab_size:int=49408
     max_ctx_len: int = 77
     emb_dim: int = 128
     n_heads: int = 8
-    attn_mask: Tensor = None
     attn_dropout: float = 0.1
     ffn_mul: int = 4
     ffn_dropout: float = 0.1
@@ -21,6 +20,7 @@ class TETConfig:
     depth: int = 16
     use_moe:bool=False
     every_2:bool=False
+    device="cuda"
 
 class token_embedding(nn.Module) :
     def __init__(self, embed_dim:int, vocab_n:int, max_ctx_n:int):
@@ -33,16 +33,17 @@ class token_embedding(nn.Module) :
         return x
 
 class TET(nn.Module) :
-    def __init__(self, cfg:TETConfig):
+    def __init__(self, cfg:TETConfig, engram_cfg:engram_config=None):
         super().__init__()
         self.cfg = cfg
+        attn_mask = torch.triu(torch.full((cfg.max_ctx_len, cfg.max_ctx_len), float("-inf")), diagonal=1).to(cfg.device)
 
         self.use_moe = cfg.use_moe
         
         self.token_emb = token_embedding(vocab_n=cfg.vocab_size, embed_dim=cfg.emb_dim, max_ctx_n=cfg.max_ctx_len)
         self.Encoder = MOE_Encoder(ffn_dropout=cfg.ffn_dropout,
                                    attn_dropout=cfg.attn_dropout,
-                                   mask=cfg.attn_mask,
+                                   mask=attn_mask,
                                    depth=cfg.depth,
                                    emb_dim=cfg.emb_dim,
                                    ffn_mul=cfg.ffn_mul,
@@ -50,21 +51,23 @@ class TET(nn.Module) :
                                    c=cfg.c,
                                    k=cfg.k,
                                    n_experts=cfg.n_experts,
-                                   every_2=cfg.every_2
+                                   every_2=cfg.every_2,
+                                   engram_cfg=engram_cfg
                                    ) if cfg.use_moe else MSA_Encoder(ffn_dropout=cfg.ffn_dropout,
-                                   mask=cfg.attn_mask,
+                                   mask=attn_mask,
                                    attn_dropout=cfg.attn_dropout,
                                    depth=cfg.depth,
                                    emb_dim=cfg.emb_dim,
                                    ffn_mul=cfg.ffn_mul,
-                                   n_heads=cfg.n_heads)
+                                   n_heads=cfg.n_heads,
+                                   engram_cfg=engram_cfg)
 
-    def forward(self, x) :
+    def forward(self, x, engram_embedding_table=None) :
         emb = self.token_emb(x)
         if self.use_moe :
-            out, aux_loss = self.Encoder(emb)
+            out, aux_loss = self.Encoder(emb, engram_embedding_table ,x)
         else :
-            out = self.Encoder(emb)
+            out = self.Encoder(emb, engram_embedding_table ,x)
         
         if self.use_moe :
             return out, aux_loss
