@@ -11,7 +11,6 @@ class engram_config :
     engram_vocab_size: int = 226
     max_ngram: int = 3
     engram_embd_d: int = 1280
-    n_streams: int = 4
     engram_layer_n = [2, 8]
     vocab_size: int = 49408
 
@@ -86,13 +85,13 @@ class NgramHashMapping(nn.Module):
 
 
 class EngramModule(nn.Module):
-    def __init__(self, engram_cfg:engram_config):
+    def __init__(self, engram_cfg:engram_config, n_streams):
         super().__init__()
 
         self.engram_vocab_size = [engram_cfg.engram_vocab_size] * (engram_cfg.max_ngram - 1)
         self.embd_d = engram_cfg.embd_d
         self.engram_embd_d = engram_cfg.engram_embd_d
-        self.n_streams = engram_cfg.n_streams
+        self.n_streams = n_streams
 
         self.hasher = NgramHashMapping(engram_cfg.engram_vocab_size, engram_cfg.max_ngram)
         self.total_slots = sum(self.hasher.vocab_sizes) * self.hasher.num_heads
@@ -104,13 +103,15 @@ class EngramModule(nn.Module):
 
         self.val_proj = nn.Linear(input_dim, engram_cfg.embd_d)
         self.key_projs = nn.ModuleList([
-            nn.Linear(input_dim, engram_cfg.embd_d) for _ in range(engram_cfg.n_streams)
+            nn.Linear(input_dim, engram_cfg.embd_d) for _ in range(n_streams)
         ])
-        self.norm_q = nn.ModuleList([nn.RMSNorm(engram_cfg.embd_d) for _ in range(engram_cfg.n_streams)])
-        self.norm_k = nn.ModuleList([nn.RMSNorm(engram_cfg.embd_d) for _ in range(engram_cfg.n_streams)])
-        self.conv = ShortConv(engram_cfg.embd_d, hc_mult=engram_cfg.n_streams)
+        self.norm_q = nn.ModuleList([nn.RMSNorm(engram_cfg.embd_d) for _ in range(n_streams)])
+        self.norm_k = nn.ModuleList([nn.RMSNorm(engram_cfg.embd_d) for _ in range(n_streams)])
+        self.conv = ShortConv(engram_cfg.embd_d, hc_mult=n_streams)
 
     def forward(self, x, input_ids, embedding:nn.Embedding):
+        if len(x.shape) == 3 :
+            x = x.unsqueeze(2)
 
         hash_ids = self.hasher(input_ids)
         offsets = torch.tensor([0] + [v for v in self.engram_vocab_size for _ in range(self.hasher.num_heads)],
@@ -134,6 +135,7 @@ class EngramModule(nn.Module):
         gates = torch.stack(gates, dim=2)
         v_gated = v_base.unsqueeze(2) * gates
         y = v_gated + self.conv(v_gated)
+        y = y.squeeze(2)
         return y
 
 if __name__ == "__main__" :

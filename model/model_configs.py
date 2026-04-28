@@ -4,6 +4,38 @@ from engram import engram_config
 from dataclasses import dataclass
 import torch.optim as optim
 
+class engram_config_set :
+    Engram_config_text_S = engram_config(
+        embd_d=256,
+        engram_vocab_size=20000,
+        max_ngram=3,
+        engram_embd_d=256,
+        vocab_size=49408
+    )
+
+    engram_config_image_S = engram_config(
+        embd_d=512,
+        engram_vocab_size=20000,
+        max_ngram=3,
+        engram_embd_d=256,
+        vocab_size=49408
+    )
+
+    engram_config_image_B = engram_config(
+        embd_d=512,
+        engram_vocab_size=20000,
+        max_ngram=3,
+        engram_embd_d=256,
+        vocab_size=49408
+    )
+
+    engram_config_image_B = engram_config(
+        embd_d=512,
+        engram_vocab_size=20000,
+        max_ngram=3,
+        engram_embd_d=256,
+        vocab_size=49408
+    )
 
 #small model need to use 362 output_dim
 @dataclass
@@ -14,7 +46,8 @@ class vit_model :
             ffn_mul=4,
             depth=8,
             patch_size=32,
-            use_moe=False
+            use_moe=False,
+            engram_cfg=engram_config_set.engram_config_image_S
         )
     VMOE_S_32 = ViTConfig(
             emb_dim=512,
@@ -26,7 +59,8 @@ class vit_model :
             c=1.05,
             k=1,
             use_moe=True,
-            every_2=False
+            every_2=False,
+            engram_cfg=engram_config_set.engram_config_image_S
     )
     VIT_B_32 = ViTConfig(
             emb_dim=768,
@@ -89,38 +123,7 @@ class tet_model :
         every_2=False
     )
 
-class engram_config_set :
-    engram_config_text_S = engram_config(
-        embd_d=256,
-        engram_vocab_size=20000,
-        max_ngram=3,
-        engram_embd_d=256,
-        vocab_size=49408
-    )
-
-    engram_config_image_S = engram_config(
-        embd_d=512,
-        engram_vocab_size=20000,
-        max_ngram=3,
-        engram_embd_d=256,
-        vocab_size=49408
-    )
-
-    engram_config_image_B = engram_config(
-        embd_d=512,
-        engram_vocab_size=20000,
-        max_ngram=3,
-        engram_embd_d=256,
-        vocab_size=49408
-    )
-
-    engram_config_image_B = engram_config(
-        embd_d=512,
-        engram_vocab_size=20000,
-        max_ngram=3,
-        engram_embd_d=256,
-        vocab_size=49408
-    )
+class exp_setting = 
 
 if __name__ == "__main__" :
     from text_encoder import TET

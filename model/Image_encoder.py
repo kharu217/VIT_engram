@@ -23,13 +23,16 @@ class ViTConfig:
     use_moe:bool=False
     every_2:bool=False
     device="cuda"
+    use_mhc:bool = False
+    engram_cfg:engram_config = None
+    
 
 
 class PatchEmbedding(nn.Module):
     def __init__(self, cfg:ViTConfig, engram_cfg:engram_config=None):
         super().__init__()
 
-        self.engram_cfg = engram_cfg
+        engram_config = cfg.engram_cfg
 
         self.patch_size = cfg.patch_size
         self.projection = nn.Sequential(
@@ -57,11 +60,11 @@ class PatchEmbedding(nn.Module):
 
 
 class VIT(nn.Module) :
-    def __init__(self, cfg:ViTConfig, engram_cfg:engram_config=None):
+    def __init__(self, cfg:ViTConfig):
         super().__init__()
         self.use_moe = cfg.use_moe
         
-        self.patch_emb = PatchEmbedding(cfg, engram_cfg=engram_cfg)
+        self.patch_emb = PatchEmbedding(cfg)
 
         if cfg.use_moe :
             self.Encoder = MOE_Encoder(ffn_dropout=cfg.ffn_dropout,
@@ -72,9 +75,10 @@ class VIT(nn.Module) :
                                    n_heads=cfg.n_heads,
                                    c=cfg.c,
                                    k=cfg.k,
+                                   use_mhc=cfg.use_mhc,
                                    n_experts=cfg.n_experts,
                                    every_2=cfg.every_2,
-                                   engram_cfg=engram_cfg
+                                   engram_cfg=cfg.engram_cfg
                                    )
         else :
             self.Encoder = MSA_Encoder(ffn_dropout=cfg.ffn_dropout,
@@ -83,7 +87,7 @@ class VIT(nn.Module) :
                                    emb_dim=cfg.emb_dim,
                                    ffn_mul=cfg.ffn_mul,
                                    n_heads=cfg.n_heads,
-                                   engram_cfg=engram_cfg)
+                                   engram_cfg=cfg.engram_cfg)
 
     def forward(self, x, engram_embedding_table=None) :
         emb, engram_token = self.patch_emb(x)
