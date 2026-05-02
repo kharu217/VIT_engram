@@ -2,17 +2,22 @@
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+
 import math
+
 from dataclasses import dataclass
+from typing import List
 
 @dataclass
-class engram_config :
+class EngramConfig :
     embd_d: int = 512
-    engram_vocab_size: int = 226
-    max_ngram: int = 3
     engram_embd_d: int = 1280
-    engram_layer_n = [2, 8]
-    vocab_size: int = 49408
+    engram_layer_n: List[int] = [2, 8]
+
+    engram_vocab_size: int = 226
+    
+    max_ngram: int = 3
+    
 
 class ShortConv(nn.Module):
     def __init__(self, hidden_size, kernel_size=4, dilation=1, hc_mult=4):
@@ -85,7 +90,7 @@ class NgramHashMapping(nn.Module):
 
 
 class EngramModule(nn.Module):
-    def __init__(self, engram_cfg:engram_config, n_streams):
+    def __init__(self, engram_cfg:EngramConfig, n_streams):
         super().__init__()
 
         self.engram_vocab_size = [engram_cfg.engram_vocab_size] * (engram_cfg.max_ngram - 1)
@@ -110,8 +115,10 @@ class EngramModule(nn.Module):
         self.conv = ShortConv(engram_cfg.embd_d, hc_mult=n_streams)
 
     def forward(self, x, input_ids, embedding:nn.Embedding):
+        #if mHC is unenabled
         if len(x.shape) == 3 :
             x = x.unsqueeze(2)
+            use_mhc = False
 
         hash_ids = self.hasher(input_ids)
         offsets = torch.tensor([0] + [v for v in self.engram_vocab_size for _ in range(self.hasher.num_heads)],
@@ -135,7 +142,9 @@ class EngramModule(nn.Module):
         gates = torch.stack(gates, dim=2)
         v_gated = v_base.unsqueeze(2) * gates
         y = v_gated + self.conv(v_gated)
-        y = y.squeeze(2)
+
+        if not use_mhc : 
+            y = y.squeeze(2)
         return y
 
 if __name__ == "__main__" :

@@ -2,21 +2,24 @@ import torch
 from torch import Tensor, nn
 import numpy as np
 
-from model_configs import ViTConfig, TETConfig, engram_config_set
-
 from Image_encoder import VIT
 from text_encoder import TET
-from engram import engram_config
+
+from Image_encoder import VitConfig
+from text_encoder import TetConfig
+from engram import EngramConfig
 
 device = "cuda" if torch.cuda.is_available() else "cpu"
 
 class CLIP(nn.Module) :
-    def __init__(self, image_encoder_cfg:ViTConfig, text_encoder_cfg:TETConfig):
+    def __init__(self, image_encoder_cfg:VitConfig, v_engram_cfg:EngramConfig, text_encoder_cfg:TetConfig, t_engram_cfg:EngramConfig):
         super().__init__()
         self.i_cfg = image_encoder_cfg
         self.t_cfg = text_encoder_cfg
+        self.i_engram_cfg = v_engram_cfg
+        self.t_engram_cfg = t_engram_cfg
 
-        self.n_ctx = TETConfig.max_ctx_len
+        self.n_ctx = TetConfig.max_ctx_len
 
         self.image_encoder = VIT(self.i_cfg)
         self.text_encoder = TET(self.t_cfg)
@@ -31,7 +34,7 @@ class CLIP(nn.Module) :
 
         if text_encoder_cfg.engram_cfg :
             self.engram_embedding = nn.ModuleList([
-                nn.Embedding((text_encoder_cfg.engram_cfg.engram_vocab_size * len(range(text_encoder_cfg.engram_cfg.max_ngram - 1))) * 2, text_encoder_cfg.engram_cfg.engram_embd_d) for _ in text_encoder_cfg.engram_cfg.engram_layer_n
+                nn.Embedding((self.i_engram_cfg.engram_vocab_size * len(range(self.i_engram_cfg.max_ngram - 1))) * 2, self.i_engram_cfg.engram_embd_d) for _ in self.i_engram_cfg.engram_layer_n
             ])
 
     @property
@@ -56,15 +59,22 @@ class CLIP(nn.Module) :
         return mask
     
     def encode_text(self, text) :
-        feat = self.text_encoder(text, self.engram_embedding).sum(dim=2)
-        feat = self.ln_t(feat)
-        if self.image_encoder
+        feat = self.text_encoder(text, self.engram_embedding)
+
+        if self.t_cfg.use_mhc :
+            feat = self.ln_t(feat)[:, :, 0, :]
+        else :
+            feat = self.ln_t(feat)
         output = feat[torch.arange(feat.shape[0]), text.argmax(dim=-1)] @ self.text_proj
         return output
         
     def encode_image(self, image) :
-        feat = self.image_encoder(image, self.engram_embedding).sum(dim=2)
-        feat = self.ln_i(feat)
+        feat = self.image_encoder(image, self.engram_embedding)
+
+        if self.i_cfg.use_mhc :
+            feat = self.ln_i(feat)[:, :, 0, :]
+        else :
+            feat = self.ln_i(feat)
         output = feat[:, 0, :] @ self.img_proj
         return output
 
@@ -94,7 +104,7 @@ if __name__ == "__main__" :
     import model_configs
     import torchinfo
 
-    temp_model = CLIP(image_encoder_cfg = model_configs.vit_model.VIT_S_32,
+    temp_model = CLIP(image_encoder_cfg=model_configs.vit_model.VIT_S_32,
                       text_encoder_cfg=model_configs.tet_model.TET_S_32).to(device)
     test_img = torch.randn((100, 3,224, 224), device=device)
     test_text = torch.randint(0, 100, (100, 77), device=device)

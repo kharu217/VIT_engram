@@ -415,7 +415,7 @@ class MSA_Encoder(nn.Module) :
 
     def forward(self, x, engram_embedding_table=None, engram_token_id=None) :
         out = x
-        if len(x.shape) == 3 and self.use_mhc:
+        if self.use_mhc:
             out.unsqueeze_(2)
             out = out.expand(-1, -1, self.n_streams, -1)
 

@@ -8,24 +8,36 @@ from engram import engram_config
 device = "cuda" if torch.cuda.is_available() else "cpu"
 
 @dataclass
-class TETConfig:
-    vocab_size:int=49408
+class TetConfig:
+    # Input
+    vocab_size: int = 49408
     max_ctx_len: int = 77
+
+    # Core
     emb_dim: int = 128
+    depth: int = 16
+
+    # Attention
     n_heads: int = 8
     attn_dropout: float = 0.1
+
+    # FFN
     ffn_mul: int = 4
     ffn_dropout: float = 0.1
+
+    # MoE
+    use_moe: bool = False
     n_experts: int = 16
     k: int = 1
     c: float = 1.0
-    depth: int = 16
-    use_moe:bool=False
-    every_2:bool=False
-    device="cuda"
-    engram_cfg:engram_config = None
-    use_mhc:bool = False
+    every_2: bool = False
+
+    # MHC
+    use_mhc: bool = False
     hc_mult: int = 4
+
+    # etc
+    device = "cuda"
 
 class token_embedding(nn.Module) :
     def __init__(self, embed_dim:int, vocab_n:int, max_ctx_n:int):
@@ -38,7 +50,7 @@ class token_embedding(nn.Module) :
         return x
 
 class TET(nn.Module) :
-    def __init__(self, cfg:TETConfig):
+    def __init__(self, cfg:TetConfig):
         super().__init__()
         self.cfg = cfg
         attn_mask = torch.triu(torch.full((cfg.max_ctx_len, cfg.max_ctx_len), float("-inf")), diagonal=1).to(device)
